@@ -1,0 +1,20 @@
+# OCR / PDF dependencies must be installed on the HOST machine (not in this compose file):
+# Ubuntu/Debian: sudo apt install tesseract-ocr tesseract-ocr-fra poppler-utils
+# macOS:        brew install tesseract tesseract-lang poppler
+# Windows:      Install Tesseract from https://github.com/UB-Mannheim/tesseract/wiki
+#               Install poppler from https://github.com/oschwartz10612/poppler-windows
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: fraudguard
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: fraudguard_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
