@@ -152,6 +152,22 @@ async def seed_demo(db: AsyncSession) -> None:
         role=UserRole.COMPTABLE,
     )
 
+    await _upsert_user(
+        db,
+        email="finance@fraudguard.tn",
+        password="Finance@2026",
+        full_name="Leila Finance",
+        role=UserRole.FINANCE,
+    )
+
+    await _upsert_user(
+        db,
+        email="viewer@fraudguard.tn",
+        password="Viewer@2026",
+        full_name="Visitor View",
+        role=UserRole.VIEWER,
+    )
+
     await db.execute(delete(Invoice).where(Invoice.user_id == comptable.id))
 
     statuses = (
