@@ -1,4 +1,4 @@
-# FraudGuard AI
+# Fraudora
 
 Système de détection d'anomalies et d'analyse OCR pour factures.
 
