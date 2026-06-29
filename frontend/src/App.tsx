@@ -12,9 +12,12 @@ import UsersPage from './pages/admin/UsersPage'
 import AnomaliesPage from './pages/anomalies/AnomaliesPage'
 import SupplierRiskPage from './pages/anomalies/SupplierRiskPage'
 import AnalysisDashboardPage from './pages/analysis/AnalysisDashboardPage'
+import ExpenseEvolutionPage from './pages/analysis/ExpenseEvolutionPage'
 import InvoiceDetailPage from './pages/invoices/InvoiceDetailPage'
 import InvoicesListPage from './pages/invoices/InvoicesListPage'
 import UploadPage from './pages/invoices/UploadPage'
+import PendingDuplicatesPage from './pages/duplicates/PendingDuplicatesPage'
+import SupplierDetailPage from './pages/suppliers/SupplierDetailPage'
 import './App.css'
 
 function App() {
@@ -96,6 +99,30 @@ function App() {
             element={
               <ProtectedRoute allowedRoles={['FINANCE', 'ADMIN']}>
                 <SupplierRiskPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/duplicates"
+            element={
+              <ProtectedRoute allowedRoles={['FINANCE', 'ADMIN']}>
+                <PendingDuplicatesPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/suppliers/:supplierName"
+            element={
+              <ProtectedRoute allowedRoles={['FINANCE', 'ADMIN']}>
+                <SupplierDetailPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/analysis/evolution"
+            element={
+              <ProtectedRoute allowedRoles={['COMPTABLE', 'FINANCE', 'ADMIN']}>
+                <ExpenseEvolutionPage />
               </ProtectedRoute>
             }
           />

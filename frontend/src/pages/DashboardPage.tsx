@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { getDashboardSummary } from '../api/dashboard'
+import { downloadDashboardReport } from '../api/reports'
 import type { DashboardSummary } from '../types/dashboard'
 import { useAuthStore } from '../store/authStore'
 
@@ -144,6 +145,23 @@ export default function DashboardPage() {
   const user = useAuthStore((state) => state.user)
   const [dateFrom, setDateFrom] = useState(daysAgoISO(30))
   const [dateTo, setDateTo] = useState(todayISO())
+  const [exporting, setExporting] = useState<'pdf' | 'excel' | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
+
+  const canExport = user && ['FINANCE', 'ADMIN'].includes(user.role)
+
+  async function handleExport(format: 'pdf' | 'excel') {
+    setExporting(format)
+    try {
+      await downloadDashboardReport(format, dateFrom, dateTo)
+      setToast('Rapport téléchargé')
+    } catch {
+      setToast('Erreur lors du téléchargement')
+    } finally {
+      setExporting(null)
+      setTimeout(() => setToast(null), 3000)
+    }
+  }
 
   const { data, isLoading } = useQuery({
     queryKey: ['dashboard', dateFrom, dateTo],
@@ -161,6 +179,31 @@ export default function DashboardPage() {
         dateTo={dateTo}
         onChange={(from, to) => { setDateFrom(from); setDateTo(to) }}
       />
+
+      {canExport && (
+        <div className="filters-bar" style={{ marginTop: '8px', gap: '8px' }}>
+          <button
+            className="btn btn-primary btn-sm"
+            disabled={exporting !== null}
+            onClick={() => handleExport('pdf')}
+          >
+            {exporting === 'pdf' ? (
+              <span className="btn-with-spinner"><span className="spinner spinner--sm" /> Export PDF…</span>
+            ) : 'Export PDF'}
+          </button>
+          <button
+            className="btn btn-primary btn-sm"
+            disabled={exporting !== null}
+            onClick={() => handleExport('excel')}
+          >
+            {exporting === 'excel' ? (
+              <span className="btn-with-spinner"><span className="spinner spinner--sm" /> Export Excel…</span>
+            ) : 'Export Excel'}
+          </button>
+        </div>
+      )}
+
+      {toast && <div className="form-success" style={{ marginTop: '8px' }}>{toast}</div>}
 
       {isLoading && <p>Chargement du tableau de bord...</p>}
       {!isLoading && data && (

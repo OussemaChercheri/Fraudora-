@@ -10,7 +10,7 @@ from app.database import get_db
 from app.models.user import User
 from app.schemas.duplicate_match import DuplicateMatchResponse, DuplicateReviewRequest
 from app.services import duplicate_service
-from app.services.report_service import generate_duplicates_report_excel, generate_duplicates_report_pdf
+from app.services.report_service import generate_duplicates_report_excel, generate_duplicates_report_pdf, get_duplicates_report_data
 from app.utils.dependencies import get_current_user, require_role
 
 router = APIRouter(prefix="/api/v1/duplicates", tags=["duplicates"])
@@ -88,6 +88,16 @@ async def duplicates_report_pdf(
             "Content-Disposition": f"attachment; filename=fraudguard_doublons_{f_from}_{f_to}.pdf",
         },
     )
+
+
+@router.get("/report/summary")
+async def duplicates_report_summary(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(require_role(["FINANCE", "ADMIN"]))],
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+) -> dict:
+    return await get_duplicates_report_data(db, current_user, date_from, date_to)
 
 
 @router.get("/report/excel")

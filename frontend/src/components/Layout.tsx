@@ -38,12 +38,20 @@ export default function Layout() {
             {pendingCount > 0 && <span className="sidebar__badge">{pendingCount}</span>}
           </NavLink>
           {canViewRiskScores && (
-            <NavLink to="/anomalies/suppliers" className={({ isActive }) => isActive ? 'sidebar__link sidebar__link--active' : 'sidebar__link'}>
-              Risques fournisseurs
-            </NavLink>
+            <>
+              <NavLink to="/anomalies/suppliers" className={({ isActive }) => isActive ? 'sidebar__link sidebar__link--active' : 'sidebar__link'}>
+                Risques fournisseurs
+              </NavLink>
+              <NavLink to="/duplicates" className={({ isActive }) => isActive ? 'sidebar__link sidebar__link--active' : 'sidebar__link'}>
+                Doublons
+              </NavLink>
+            </>
           )}
           <NavLink to="/analysis" className={({ isActive }) => isActive ? 'sidebar__link sidebar__link--active' : 'sidebar__link'}>
             Analyse OCR
+          </NavLink>
+          <NavLink to="/analysis/evolution" className={({ isActive }) => isActive ? 'sidebar__link sidebar__link--active' : 'sidebar__link'}>
+            Évolution des dépenses
           </NavLink>
           {user?.role === 'ADMIN' && (
             <>

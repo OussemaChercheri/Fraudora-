@@ -125,8 +125,62 @@ async def expense_evolution(
     date_to: date = Query(...),
     granularity: str = Query("month", pattern="^(day|week|month)$"),
 ) -> dict:
-    user_id = _resolve_user_filter(current_user)
     result = await analysis_service.get_expense_evolution(
         db, current_user, date_from, date_to, granularity,
     )
     return result
+
+
+@router.get("/suppliers/{supplier_name}/detail")
+async def supplier_detail(
+    supplier_name: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, report_access],
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+) -> dict:
+    return await report_service.get_supplier_detail_data(
+        db, current_user, supplier_name, date_from, date_to,
+    )
+
+
+@router.get("/suppliers/{supplier_name}/report/pdf")
+async def supplier_report_pdf(
+    supplier_name: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, report_access],
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+) -> StreamingResponse:
+    pdf = await report_service.generate_supplier_detail_report_pdf(
+        db, current_user, supplier_name, date_from, date_to,
+    )
+    safe_name = supplier_name.replace(" ", "_").replace("/", "_")
+    return StreamingResponse(
+        iter([pdf]),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename=fraudguard_fournisseur_{safe_name}.pdf",
+        },
+    )
+
+
+@router.get("/suppliers/{supplier_name}/report/excel")
+async def supplier_report_excel(
+    supplier_name: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, report_access],
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+) -> StreamingResponse:
+    xlsx = await report_service.generate_supplier_detail_report_excel(
+        db, current_user, supplier_name, date_from, date_to,
+    )
+    safe_name = supplier_name.replace(" ", "_").replace("/", "_")
+    return StreamingResponse(
+        iter([xlsx]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f"attachment; filename=fraudguard_fournisseur_{safe_name}.xlsx",
+        },
+    )

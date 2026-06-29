@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 
 import { getSupplierRiskScores, recomputeRiskScores } from '../../api/anomalies'
 
@@ -100,7 +101,11 @@ export default function SupplierRiskPage() {
                 .sort((a, b) => b.risk_score - a.risk_score)
                 .map((supplier) => (
                   <tr key={supplier.id}>
-                    <td style={{ fontWeight: 500 }}>{supplier.supplier_name}</td>
+                    <td style={{ fontWeight: 500 }}>
+                      <Link to={`/suppliers/${encodeURIComponent(supplier.supplier_name)}`} style={{ textDecoration: 'none', color: 'inherit' }}>
+                        {supplier.supplier_name}
+                      </Link>
+                    </td>
                     <td>
                       <span className={`severity-badge ${scoreClass(supplier.risk_score)}`}>
                         {supplier.risk_score}/100

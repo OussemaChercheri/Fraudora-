@@ -1,3 +1,5 @@
+import statistics
+
 from datetime import date, datetime
 from io import BytesIO
 from typing import Optional
@@ -24,9 +26,11 @@ from sqlalchemy import Date, and_, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
+from app.models.anomaly_alert import AnomalyAlert
 from app.models.duplicate_match import DuplicateMatch, DuplicateStatus, MatchType
 from app.models.invoice import Invoice, InvoiceStatus
 from app.models.invoice_data import InvoiceData
+from app.models.supplier_risk_score import SupplierRiskScore
 from app.models.user import User, UserRole
 from app.services import analysis_service
 from app.services.dashboard_service import get_dashboard_summary
@@ -930,6 +934,327 @@ async def generate_duplicates_report_excel(
         cell.font = header_font
         cell.fill = header_fill
     _auto_width(ws2)
+
+    output = BytesIO()
+    wb.save(output)
+    return output.getvalue()
+
+
+async def get_supplier_detail_data(
+    db: AsyncSession,
+    current_user: User,
+    supplier_name: str,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+) -> dict:
+    if current_user.role not in (UserRole.ADMIN, UserRole.FINANCE):
+        return {"error": "Insufficient permissions"}
+
+    invoice_conditions = [
+        Invoice.status.in_([InvoiceStatus.PROCESSED, InvoiceStatus.REVIEW_REQUIRED]),
+    ]
+    if date_from:
+        invoice_conditions.append(InvoiceData.invoice_date >= date_from)
+    if date_to:
+        invoice_conditions.append(InvoiceData.invoice_date <= date_to)
+
+    risk_result = await db.execute(
+        select(SupplierRiskScore).where(SupplierRiskScore.supplier_name == supplier_name)
+    )
+    risk = risk_result.scalar_one_or_none()
+
+    invoice_data_query = (
+        select(InvoiceData, Invoice)
+        .join(Invoice, InvoiceData.invoice_id == Invoice.id)
+        .where(
+            InvoiceData.supplier_name == supplier_name,
+            *invoice_conditions,
+        )
+        .order_by(InvoiceData.invoice_date.desc())
+    )
+    result = await db.execute(invoice_data_query)
+    rows = result.all()
+
+    historique = []
+    montants = []
+    invoice_ids = []
+    for inv_data, inv in rows:
+        montants.append(float(inv_data.total_amount) if inv_data.total_amount else 0.0)
+        invoice_ids.append(inv.id)
+        historique.append({
+            "invoice_id": str(inv.id),
+            "invoice_number": inv_data.invoice_number or "",
+            "invoice_date": inv_data.invoice_date.isoformat() if inv_data.invoice_date else "",
+            "total_amount": float(inv_data.total_amount) if inv_data.total_amount else 0.0,
+            "tax_amount": float(inv_data.tax_amount) if inv_data.tax_amount else 0.0,
+            "status": inv.status.value,
+            "has_anomaly": inv.has_anomaly_alert or False,
+            "has_duplicate": inv.has_duplicate_alert or False,
+        })
+
+    anomalies = []
+    if invoice_ids:
+        anom_result = await db.execute(
+            select(AnomalyAlert).where(
+                AnomalyAlert.invoice_id.in_(invoice_ids),
+                AnomalyAlert.status != "DISMISSED",
+            ).order_by(AnomalyAlert.created_at.desc())
+        )
+        for a in anom_result.scalars().all():
+            inv = next((h for h in historique if h["invoice_id"] == str(a.invoice_id)), None)
+            anomalies.append({
+                "id": str(a.id),
+                "invoice_id": str(a.invoice_id),
+                "alert_type": a.alert_type.value,
+                "severity": a.severity.value,
+                "description": a.description,
+                "metric_value": a.metric_value,
+                "threshold_value": a.threshold_value,
+                "status": a.status.value,
+                "created_at": a.created_at.isoformat() if a.created_at else "",
+                "invoice_number": inv["invoice_number"] if inv else "",
+                "invoice_date": inv["invoice_date"] if inv else "",
+            })
+
+    freq_invoices_per_month = 0.0
+    avg_days_between = None
+    if len(historique) >= 2:
+        dates_sorted = sorted(
+            h["invoice_date"] for h in historique if h["invoice_date"]
+        )
+        if dates_sorted:
+            date_objs = [date.fromisoformat(d) for d in dates_sorted]
+            total_days = (date_objs[-1] - date_objs[0]).days
+            months_span = max(total_days / 30.44, 1)
+            freq_invoices_per_month = round(len(dates_sorted) / months_span, 2)
+            if len(date_objs) > 1:
+                gaps = [(date_objs[i] - date_objs[i - 1]).days for i in range(1, len(date_objs))]
+                avg_days_between = round(sum(gaps) / len(gaps), 1)
+
+    std_amount = 0.0
+    if len(montants) > 1:
+        std_amount = round(statistics.stdev(montants), 3)
+
+    score = risk.risk_score if risk else 0
+    if score >= 60:
+        risk_level = "Élevé"
+    elif score >= 30:
+        risk_level = "Modéré"
+    else:
+        risk_level = "Faible"
+
+    return {
+        "supplier_name": supplier_name,
+        "risk_score": score,
+        "risk_level": risk_level,
+        "total_invoices": len(rows),
+        "total_sum": round(sum(montants), 3),
+        "avg_amount": round(sum(montants) / max(len(montants), 1), 3),
+        "min_amount": round(min(montants), 3) if montants else 0.0,
+        "max_amount": round(max(montants), 3) if montants else 0.0,
+        "std_amount": std_amount,
+        "frequence": {
+            "invoices_per_month": freq_invoices_per_month,
+            "avg_days_between_invoices": avg_days_between,
+        },
+        "historique": historique,
+        "anomalies": anomalies,
+    }
+
+
+async def generate_supplier_detail_report_pdf(
+    db: AsyncSession,
+    current_user: User,
+    supplier_name: str,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+) -> bytes:
+    data = await get_supplier_detail_data(db, current_user, supplier_name, date_from, date_to)
+    if "error" in data:
+        return b""
+
+    buffer = BytesIO()
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle("CoverTitle", parent=styles["Title"], fontName="Helvetica-Bold", fontSize=24, textColor=PRIMARY, spaceAfter=12)
+    subtitle_style = ParagraphStyle("CoverSubtitle", parent=styles["Normal"], fontName="Helvetica", fontSize=14, textColor=colors.HexColor("#444444"), spaceAfter=8)
+    heading_style = ParagraphStyle("SectionHeading", parent=styles["Heading1"], fontName="Helvetica-Bold", fontSize=16, textColor=PRIMARY, spaceAfter=12)
+    normal = ParagraphStyle("Normal", parent=styles["Normal"], fontName="Helvetica", fontSize=10)
+
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=2*cm, leftMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm)
+    story: list = []
+
+    period_str = f"Du {date_from} au {date_to}" if date_from and date_to else "Toute la période"
+    now_str = datetime.now().strftime("%d/%m/%Y %H:%M")
+
+    story.append(Spacer(1, 4*cm))
+    story.append(Paragraph(f"FraudGuard AI — Analyse fournisseur", title_style))
+    story.append(Paragraph(data["supplier_name"], subtitle_style))
+    story.append(Spacer(1, 0.5*cm))
+    story.append(Paragraph(f"Période : {period_str}", subtitle_style))
+    story.append(Paragraph(f"Généré le {now_str}", subtitle_style))
+    story.append(Spacer(1, 1*cm))
+
+    risk_color = colors.HexColor("#DC2626") if data["risk_level"] == "Élevé" else (colors.HexColor("#EA580C") if data["risk_level"] == "Modéré" else colors.HexColor("#16A34A"))
+    risk_table = Table(
+        [[f"Score de risque : {data['risk_score']}/100 — {data['risk_level']}"]],
+        colWidths=[14*cm],
+    )
+    risk_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), risk_color),
+        ("TEXTCOLOR", (0, 0), (-1, -1), colors.white),
+        ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 14),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("TOPPADDING", (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+    ]))
+    story.append(risk_table)
+    story.append(PageBreak())
+
+    story.append(Paragraph("Statistiques des montants", heading_style))
+    stats_data = [
+        ["Indicateur", "Valeur (TND)"],
+        ["Total", f"{data['total_sum']:.3f}"],
+        ["Moyenne", f"{data['avg_amount']:.3f}"],
+        ["Min", f"{data['min_amount']:.3f}"],
+        ["Max", f"{data['max_amount']:.3f}"],
+        ["Écart-type", f"{data['std_amount']:.3f}"],
+    ]
+    t = Table(stats_data, colWidths=[8*cm, 8*cm])
+    t.setStyle(_table_style())
+    story.append(t)
+    story.append(Spacer(1, 0.5*cm))
+
+    if data.get("frequence"):
+        story.append(Paragraph("Fréquence", heading_style))
+        freq = data["frequence"]
+        freq_data = [["Indicateur", "Valeur"], ["Factures/mois", f"{freq['invoices_per_month']}"], ["Jours moyens entre factures", str(freq['avg_days_between_invoices'] or "—")]]
+        t2 = Table(freq_data, colWidths=[8*cm, 8*cm])
+        t2.setStyle(_table_style(SECONDARY))
+        story.append(t2)
+    story.append(PageBreak())
+
+    story.append(Paragraph("Historique des factures", heading_style))
+    hist_headers = ["Date", "N° facture", "Montant", "TVA", "Statut", "Alertes"]
+    hist_rows = [hist_headers]
+    for h in data["historique"]:
+        alert_icons = []
+        if h["has_anomaly"]:
+            alert_icons.append("⚠")
+        if h["has_duplicate"]:
+            alert_icons.append("⚡")
+        hist_rows.append([
+            h["invoice_date"],
+            h["invoice_number"],
+            f"{h['total_amount']:.3f}",
+            f"{h['tax_amount']:.3f}",
+            h["status"],
+            " ".join(alert_icons) or "—",
+        ])
+    t3 = Table(hist_rows, colWidths=[2.5*cm, 3*cm, 2.5*cm, 2.5*cm, 2.5*cm, 2*cm])
+    t3.setStyle(_table_style())
+    story.append(t3)
+    story.append(PageBreak())
+
+    story.append(Paragraph("Anomalies liées", heading_style))
+    if data["anomalies"]:
+        anom_headers = ["Type", "Sévérité", "Description", "Date", "N° facture"]
+        anom_rows = [anom_headers]
+        for a in data["anomalies"]:
+            anom_rows.append([
+                a["alert_type"],
+                a["severity"],
+                a["description"],
+                a["created_at"][:10],
+                a["invoice_number"],
+            ])
+        t4 = Table(anom_rows, colWidths=[3*cm, 2*cm, 4*cm, 2.5*cm, 2.5*cm])
+        base_style = _table_style(DANGER)
+        for i, a in enumerate(data["anomalies"], 1):
+            if a["severity"] == "HIGH":
+                base_style.add("BACKGROUND", (0, i), (-1, i), colors.HexColor("#FEE2E2"))
+            elif a["severity"] == "MEDIUM":
+                base_style.add("BACKGROUND", (0, i), (-1, i), colors.HexColor("#FFEDD5"))
+        t4.setStyle(base_style)
+        story.append(t4)
+    else:
+        story.append(Paragraph("Aucune anomalie détectée pour ce fournisseur.", normal))
+
+    doc.build(story, onFirstPage=_add_page_number, onLaterPages=_add_page_number)
+    return buffer.getvalue()
+
+
+async def generate_supplier_detail_report_excel(
+    db: AsyncSession,
+    current_user: User,
+    supplier_name: str,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+) -> bytes:
+    data = await get_supplier_detail_data(db, current_user, supplier_name, date_from, date_to)
+    if "error" in data:
+        return b""
+
+    wb = Workbook()
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="185FA5")
+
+    ws = wb.active
+    ws.title = "Résumé"
+    ws.append(["Indicateur", "Valeur"])
+    ws.append(["Fournisseur", data["supplier_name"]])
+    ws.append(["Score de risque", f"{data['risk_score']}/100 — {data['risk_level']}"])
+    ws.append(["Total factures", data["total_invoices"]])
+    ws.append(["Total montants (TND)", data["total_sum"]])
+    ws.append(["Moyenne (TND)", data["avg_amount"]])
+    ws.append(["Min (TND)", data["min_amount"]])
+    ws.append(["Max (TND)", data["max_amount"]])
+    ws.append(["Écart-type (TND)", data["std_amount"]])
+    if data.get("frequence"):
+        ws.append(["Factures/mois", data["frequence"]["invoices_per_month"]])
+        ws.append(["Jours moyens entre factures", data["frequence"]["avg_days_between_invoices"]])
+    for cell in ws[1]:
+        cell.font = header_font
+        cell.fill = header_fill
+    _auto_width(ws)
+
+    ws2 = wb.create_sheet("Historique")
+    ws2.append(["Date", "N° facture", "Montant TTC", "TVA", "Statut", "Anomalie", "Doublon"])
+    for h in data["historique"]:
+        ws2.append([
+            h["invoice_date"],
+            h["invoice_number"],
+            h["total_amount"],
+            h["tax_amount"],
+            h["status"],
+            "Oui" if h["has_anomaly"] else "Non",
+            "Oui" if h["has_duplicate"] else "Non",
+        ])
+    for cell in ws2[1]:
+        cell.font = header_font
+        cell.fill = header_fill
+    _auto_width(ws2)
+
+    ws3 = wb.create_sheet("Anomalies")
+    if data["anomalies"]:
+        ws3.append(["ID", "Type", "Sévérité", "Description", "Valeur", "Seuil", "Date", "N° facture"])
+        for a in data["anomalies"]:
+            ws3.append([
+                a["id"],
+                a["alert_type"],
+                a["severity"],
+                a["description"],
+                a["metric_value"],
+                a["threshold_value"],
+                a["created_at"][:10],
+                a["invoice_number"],
+            ])
+    else:
+        ws3.append(["Aucune anomalie détectée"])
+    for cell in ws3[1]:
+        cell.font = header_font
+        cell.fill = header_fill
+    _auto_width(ws3)
 
     output = BytesIO()
     wb.save(output)
