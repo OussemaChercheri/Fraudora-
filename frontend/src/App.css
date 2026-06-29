@@ -1352,6 +1352,23 @@
   margin-top: 2px;
 }
 
+.sidebar__logout {
+  margin-top: 8px;
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-h);
+  padding: 4px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  width: 100%;
+  text-align: center;
+}
+
+.sidebar__logout:hover {
+  background: var(--hover);
+}
+
 /* ── Status badge small ── */
 
 .status-badge--small {

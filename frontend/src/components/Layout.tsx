@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 
 import { getPendingAnomalies } from '../api/anomalies'
 import NotificationBell from './NotificationBell'
@@ -8,6 +8,8 @@ import { APP_NAME } from '../utils/constants'
 
 export default function Layout() {
   const user = useAuthStore((state) => state.user)
+  const logout = useAuthStore((state) => state.logout)
+  const navigate = useNavigate()
   const canViewAnomalies = user && ['COMPTABLE', 'FINANCE', 'ADMIN'].includes(user.role)
   const canViewRiskScores = user && ['FINANCE', 'ADMIN'].includes(user.role)
 
@@ -66,10 +68,15 @@ export default function Layout() {
         </nav>
         <div className="sidebar__footer">
           {user && (
-            <span className="sidebar__user">
-              {user.full_name}
-              <span className="sidebar__user-role">{user.role}</span>
-            </span>
+            <>
+              <span className="sidebar__user">
+                {user.full_name}
+                <span className="sidebar__user-role">{user.role}</span>
+              </span>
+              <button className="sidebar__logout" onClick={() => { logout(); navigate('/login') }}>
+                Déconnecter
+              </button>
+            </>
           )}
         </div>
       </aside>
